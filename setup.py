@@ -4,10 +4,10 @@ from os import path
 
 _dir = path.abspath(path.dirname(__file__))
 
-with open(path.join(_dir,'csbdeep','version.py')) as f:
+with open(path.join(_dir, 'csbdeep', 'version.py')) as f:
     exec(f.read())
 
-with open(path.join(_dir,'README.md')) as f:
+with open(path.join(_dir, 'README.md')) as f:
     long_description = f.read()
 
 

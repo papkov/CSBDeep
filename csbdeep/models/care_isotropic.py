@@ -157,4 +157,3 @@ class IsotropicCARE(CARE):
 
         res = np.rollaxis(res, -1, axis)
         return res
-

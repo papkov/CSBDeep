@@ -37,7 +37,7 @@ def custom_unet(input_shape,
     n_dim = len(kernel_size)
     conv = Conv2D if n_dim==2 else Conv3D
 
-    input = Input(input_shape, name = "input")
+    input = Input(input_shape, name="input")
     unet = unet_block(n_depth, n_filter_base, kernel_size,
                       activation=activation, dropout=dropout, batch_norm=batch_norm,
                       n_conv_per_depth=n_conv_per_depth, pool=pool_size)(input)
@@ -52,13 +52,84 @@ def custom_unet(input_shape,
     if prob_out:
         scale = conv(n_channel_out, (1,)*n_dim, activation='softplus')(unet)
         scale = Lambda(lambda x: x+np.float32(eps_scale))(scale)
-        final = Concatenate(axis=channel_axis)([final,scale])
+        final = Concatenate(axis=channel_axis)([final, scale])
 
     return Model(inputs=input, outputs=final)
 
 
+def uxnet(input_shape,
+          n_depth=2,
+          n_filter_base=16,
+          kernel_size=(3, 3),
+          n_conv_per_depth=2,
+          activation="relu",
+          last_activation='linear',
+          batch_norm=False,
+          dropout=0.0,
+          pool_size=(2, 2),
+          residual=True,
+          prob_out=False,
+          eps_scale=1e-3):
+    """
+    Multi-body U-Net which learns identity by leaving one plane out in each branch
 
-def common_unet(n_dim=2, n_depth=1, kern_size=3, n_first=16, n_channel_out=1, residual=True, prob_out=False, last_activation='linear'):
+    TODO: fill params
+
+    :param input_shape:
+    :param n_depth:
+    :param n_filter_base:
+    :param kernel_size:
+    :param n_conv_per_depth:
+    :param activation:
+    :param last_activation:
+    :param batch_norm:
+    :param dropout:
+    :param pool_size:
+    :param n_channel_out:
+    :param prob_out:
+    :param eps_scale:
+    :return: Model
+    """
+    # Define vars
+    channel_axis = -1 if backend_channels_last() else 1
+    n_planes = input_shape[channel_axis]
+    n_dim = len(kernel_size)
+    conv = Conv2D if n_dim == 2 else Conv3D
+
+    # Define functional model
+    input = Input(shape=input_shape, name='input_main')
+
+    # Split planes (preserve channel)
+    input_x = [Lambda(lambda x: x[..., i:i+1], output_shape=(None, None, 1))(input) for i in range(n_planes)]
+
+    # Concatenate planes back in leave-one-out way
+    input_x_out = [Concatenate(axis=-1)([plane for i, plane in enumerate(input_x) if i != j]) for j in range(n_planes)]
+
+    # Create U-Net blocks (by number of planes)
+    unet_x = [unet_block(n_depth, n_filter_base, kernel_size,
+                         activation=activation, dropout=dropout, batch_norm=batch_norm,
+                         n_conv_per_depth=n_conv_per_depth, pool=pool_size,
+                         prefix='out_{}'.format(i))(inp_out) for i, inp_out in enumerate(input_x_out)]
+
+    # Concatenate outputs of blocks
+    unet = Concatenate(axis=-1)(unet_x)
+
+    # Final activation layer
+    final = conv(n_planes, (1, 1), activation=activation)(unet)
+    if residual:
+        final = Add()([final, input])
+    final = Activation(activation=last_activation)(final)
+
+    if prob_out:
+        scale = conv(1, (1,)*n_dim, activation='softplus')(unet)
+        scale = Lambda(lambda x: x+np.float32(eps_scale))(scale)
+        final = Concatenate(axis=channel_axis)([final, scale])
+
+    return Model(inputs=input, outputs=final)
+
+
+def common_unet(n_dim=2, n_depth=1, kern_size=3, n_first=16, n_channel_out=1,
+                residual=True, prob_out=False, last_activation='linear'):
     """Construct a common CARE neural net based on U-Net [1]_ and residual learning [2]_ to be used for image restoration/enhancement.
 
     Parameters
@@ -97,9 +168,17 @@ def common_unet(n_dim=2, n_depth=1, kern_size=3, n_first=16, n_channel_out=1, re
     .. [2] Kaiming He, Xiangyu Zhang, Shaoqing Ren, Jian Sun. *Deep Residual Learning for Image Recognition*, CVPR 2016
     """
     def _build_this(input_shape):
-        return custom_unet(input_shape, last_activation, n_depth, n_first, (kern_size,)*n_dim, pool_size=(2,)*n_dim, n_channel_out=n_channel_out, residual=residual, prob_out=prob_out)
+        return custom_unet(input_shape, last_activation, n_depth, n_first, (kern_size,)*n_dim, pool_size=(2,)*n_dim,
+                           n_channel_out=n_channel_out, residual=residual, prob_out=prob_out)
     return _build_this
 
+
+def common_uxnet(n_dim=2, n_depth=1, kern_size=3, n_first=16,
+                 residual=True, prob_out=False, last_activation='linear'):
+    def _build_this(input_shape):
+        return custom_unet(input_shape, last_activation, n_depth, n_first, (kern_size,)*n_dim, pool_size=(2,)*n_dim,
+                           residual=residual, prob_out=prob_out)
+    return _build_this
 
 
 modelname = re.compile("^(?P<model>resunet|unet)(?P<n_dim>\d)(?P<prob_out>p)?_(?P<n_depth>\d+)_(?P<kern_size>\d+)_(?P<n_first>\d+)(_(?P<n_channel_out>\d+)out)?(_(?P<last_activation>.+)-last)?$")

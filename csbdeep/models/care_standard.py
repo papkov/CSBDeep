@@ -142,7 +142,7 @@ class CARE(object):
 
 
     @suppress_without_basedir(warn=False)
-    def _find_and_load_weights(self,prefer='best'):
+    def _find_and_load_weights(self, prefer='best'):
         from itertools import chain
         # get all weight files and sort by modification time descending (newest first)
         weights_ext   = ('*.h5','*.hdf5')

@@ -41,6 +41,7 @@ del K
 # imports
 from .config import Config
 from .care_standard import CARE
+from .care_multiplane import MultiplaneCARE
+from .care_projection import ProjectionCARE
 from .care_upsampling import UpsamplingCARE
 from .care_isotropic import IsotropicCARE
-from .care_projection import ProjectionCARE

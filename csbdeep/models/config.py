@@ -141,7 +141,6 @@ class Config(argparse.Namespace):
         for k in kwargs:
             setattr(self, k, kwargs[k])
 
-
     def is_valid(self, return_invalid=False):
         """Check if configuration is valid.
 
