@@ -85,7 +85,6 @@ def uxnet(input_shape,
     :param batch_norm:
     :param dropout:
     :param pool_size:
-    :param n_channel_out:
     :param prob_out:
     :param eps_scale:
     :return: Model
@@ -109,19 +108,23 @@ def uxnet(input_shape,
     unet_x = [unet_block(n_depth, n_filter_base, kernel_size,
                          activation=activation, dropout=dropout, batch_norm=batch_norm,
                          n_conv_per_depth=n_conv_per_depth, pool=pool_size,
-                         prefix='out_{}'.format(i))(inp_out) for i, inp_out in enumerate(input_x_out)]
+                         prefix='out_{}_'.format(i))(inp_out) for i, inp_out in enumerate(input_x_out)]
 
-    # Concatenate outputs of blocks
+    # Convolve n_filter_base to 1 as each U-Net predicts a single plane
+    unet_x = [conv(1, (1,) * n_dim, activation=activation)(unet) for unet in unet_x]
+
+    # For residual U-Net sum up output with its neighbor (next for the first plane, previous for the rest
+    if residual:
+        unet_x = [Add()([unet, inp]) for unet, inp in zip(unet_x, [input_x[1]]+input_x[:-1])]
+
+    # Concatenate outputs of blocks, should receive (None, None, None, n_planes)
     unet = Concatenate(axis=-1)(unet_x)
 
     # Final activation layer
-    final = conv(n_planes, (1, 1), activation=activation)(unet)
-    if residual:
-        final = Add()([final, input])
-    final = Activation(activation=last_activation)(final)
+    final = Activation(activation=last_activation)(unet)
 
     if prob_out:
-        scale = conv(1, (1,)*n_dim, activation='softplus')(unet)
+        scale = conv(n_planes, (1,)*n_dim, activation='softplus')(unet)
         scale = Lambda(lambda x: x+np.float32(eps_scale))(scale)
         final = Concatenate(axis=channel_axis)([final, scale])
 
@@ -130,7 +133,9 @@ def uxnet(input_shape,
 
 def common_unet(n_dim=2, n_depth=1, kern_size=3, n_first=16, n_channel_out=1,
                 residual=True, prob_out=False, last_activation='linear'):
-    """Construct a common CARE neural net based on U-Net [1]_ and residual learning [2]_ to be used for image restoration/enhancement.
+    """
+    Construct a common CARE neural net based on U-Net [1]_ and residual learning [2]_
+    to be used for image restoration/enhancement.
 
     Parameters
     ----------
@@ -176,8 +181,9 @@ def common_unet(n_dim=2, n_depth=1, kern_size=3, n_first=16, n_channel_out=1,
 def common_uxnet(n_dim=2, n_depth=1, kern_size=3, n_first=16,
                  residual=True, prob_out=False, last_activation='linear'):
     def _build_this(input_shape):
-        return custom_unet(input_shape, last_activation, n_depth, n_first, (kern_size,)*n_dim, pool_size=(2,)*n_dim,
-                           residual=residual, prob_out=prob_out)
+        return uxnet(input_shape=input_shape, last_activation=last_activation, n_depth=n_depth, n_filter_base=n_first,
+                     kernel_size=(kern_size,)*n_dim, pool_size=(2,)*n_dim,
+                     residual=residual, prob_out=prob_out)
     return _build_this
 
 
@@ -227,7 +233,6 @@ def common_unet_by_name(model):
     return common_unet(**options)
 
 
-
 def receptive_field_unet(n_depth, kern_size, pool_size=2, n_dim=2, img_size=1024):
     """Receptive field for U-Net model (pre/post for each dimension)."""
     x = np.zeros((1,)+(img_size,)*n_dim+(1,))
@@ -241,4 +246,4 @@ def receptive_field_unet(n_depth, kern_size, pool_size=2, n_dim=2, img_size=1024
     y  = model.predict(x)[0,...,0]
     y0 = model.predict(0*x)[0,...,0]
     ind = np.where(np.abs(y-y0)>0)
-    return [(m-np.min(i),np.max(i)-m) for (m,i) in zip(mid,ind)]
+    return [(m-np.min(i), np.max(i)-m) for (m, i) in zip(mid, ind)]
