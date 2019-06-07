@@ -4,7 +4,7 @@ from six.moves import range, zip, map, reduce, filter
 from keras.layers import Input, Conv2D, Conv3D, Activation, Lambda
 from keras.models import Model
 from keras.layers.merge import Add, Concatenate
-from .blocks import unet_block
+from .blocks import unet_block, unet_blocks
 import re
 
 from ..utils import _raise, backend_channels_last
@@ -68,8 +68,10 @@ def uxnet(input_shape,
           dropout=0.0,
           pool_size=(2, 2),
           residual=True,
+          share_middle=False,
           prob_out=False,
           eps_scale=1e-3):
+
     """
     Multi-body U-Net which learns identity by leaving one plane out in each branch
 
@@ -89,6 +91,9 @@ def uxnet(input_shape,
     :param eps_scale:
     :return: Model
     """
+
+    print(share_middle)
+
     # Define vars
     channel_axis = -1 if backend_channels_last() else 1
     n_planes = input_shape[channel_axis]
@@ -105,13 +110,20 @@ def uxnet(input_shape,
     input_x_out = [Concatenate(axis=-1)([plane for i, plane in enumerate(input_x) if i != j]) for j in range(n_planes)]
 
     # Create U-Net blocks (by number of planes)
-    unet_x = [unet_block(n_depth, n_filter_base, kernel_size,
+    unet_x = unet_blocks(n_blocks=n_planes, n_depth=n_depth, n_filter_base=n_filter_base, kernel_size=kernel_size,
                          activation=activation, dropout=dropout, batch_norm=batch_norm,
-                         n_conv_per_depth=n_conv_per_depth, pool=pool_size,
-                         prefix='out_{}_'.format(i))(inp_out) for i, inp_out in enumerate(input_x_out)]
+                         n_conv_per_depth=n_conv_per_depth, pool=pool_size, share_middle=share_middle)
+    unet_x = [unet(inp_out) for unet, inp_out in zip(unet_x, input_x_out)]
+
+    # Version without weight sharing:
+    # unet_x = [unet_block(n_depth, n_filter_base, kernel_size,
+    #                      activation=activation, dropout=dropout, batch_norm=batch_norm,
+    #                      n_conv_per_depth=n_conv_per_depth, pool=pool_size,
+    #                      prefix='out_{}_'.format(i))(inp_out) for i, inp_out in enumerate(input_x_out)]
 
     # Convolve n_filter_base to 1 as each U-Net predicts a single plane
     unet_x = [conv(1, (1,) * n_dim, activation=activation)(unet) for unet in unet_x]
+
 
     # For residual U-Net sum up output with its neighbor (next for the first plane, previous for the rest
     if residual:
@@ -179,15 +191,18 @@ def common_unet(n_dim=2, n_depth=1, kern_size=3, n_first=16, n_channel_out=1,
 
 
 def common_uxnet(n_dim=2, n_depth=1, kern_size=3, n_first=16,
-                 residual=True, prob_out=False, last_activation='linear'):
+                 residual=True, prob_out=False, last_activation='linear', share_middle=False):
+    print(share_middle)
     def _build_this(input_shape):
         return uxnet(input_shape=input_shape, last_activation=last_activation, n_depth=n_depth, n_filter_base=n_first,
                      kernel_size=(kern_size,)*n_dim, pool_size=(2,)*n_dim,
-                     residual=residual, prob_out=prob_out)
+                     residual=residual, prob_out=prob_out, share_middle=share_middle)
     return _build_this
 
 
 modelname = re.compile("^(?P<model>resunet|unet)(?P<n_dim>\d)(?P<prob_out>p)?_(?P<n_depth>\d+)_(?P<kern_size>\d+)_(?P<n_first>\d+)(_(?P<n_channel_out>\d+)out)?(_(?P<last_activation>.+)-last)?$")
+
+
 def common_unet_by_name(model):
     r"""Shorthand notation for equivalent use of :func:`common_unet`.
 

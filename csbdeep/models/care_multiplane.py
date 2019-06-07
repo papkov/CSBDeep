@@ -7,6 +7,7 @@ from ..internals import nets
 class MultiplaneCARE(CARE):
 
     def _build(self):
+        print(self.config.share_middle)
         return nets.common_uxnet(
             n_dim=self.config.n_dim,
             prob_out=self.config.probabilistic,
@@ -15,4 +16,5 @@ class MultiplaneCARE(CARE):
             kern_size=self.config.unet_kern_size,
             n_first=self.config.unet_n_first,
             last_activation=self.config.unet_last_activation,
+            share_middle=self.config.share_middle,
         )(self.config.unet_input_shape)

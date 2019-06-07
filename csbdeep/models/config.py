@@ -71,7 +71,7 @@ class Config(argparse.Namespace):
         .. _ReduceLROnPlateau: https://keras.io/callbacks/#reducelronplateau
     """
 
-    def __init__(self, axes, n_channel_in=1, n_channel_out=1, probabilistic=False, **kwargs):
+    def __init__(self, n_dim, axes, n_channel_in=1, n_channel_out=1, probabilistic=False, **kwargs):
         """See class docstring."""
 
         # parse and check axes
@@ -126,6 +126,7 @@ class Config(argparse.Namespace):
         self.train_batch_size      = 16
         self.train_tensorboard     = True
         self.train_checkpoint      = 'weights_best.h5'
+        self.share_middle = False
 
         # the parameter 'min_delta' was called 'epsilon' for keras<=2.1.5
         min_delta_key = 'epsilon' if LooseVersion(keras.__version__)<=LooseVersion('2.1.5') else 'min_delta'
@@ -133,7 +134,7 @@ class Config(argparse.Namespace):
 
         # disallow setting 'n_dim' manually
         try:
-            del kwargs['n_dim']
+            del n_dim
             # warnings.warn("ignoring parameter 'n_dim'")
         except:
             pass
@@ -149,9 +150,9 @@ class Config(argparse.Namespace):
         bool
             Flag that indicates whether the current configuration values are valid.
         """
-        def _is_int(v,low=None,high=None):
+        def _is_int(v, low=None,high=None):
             return (
-                isinstance(v,int) and
+                isinstance(v, int) and
                 (True if low is None else low <= v) and
                 (True if high is None else v <= high)
             )
