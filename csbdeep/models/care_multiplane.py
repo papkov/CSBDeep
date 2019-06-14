@@ -7,7 +7,6 @@ from ..internals import nets
 class MultiplaneCARE(CARE):
 
     def _build(self):
-        print(self.config.share_middle)
         return nets.common_uxnet(
             n_dim=self.config.n_dim,
             prob_out=self.config.probabilistic,

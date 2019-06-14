@@ -35,10 +35,11 @@ def custom_unet(input_shape,
     channel_axis = -1 if backend_channels_last() else 1
 
     n_dim = len(kernel_size)
-    conv = Conv2D if n_dim==2 else Conv3D
+    # TODO: rewrite with conv_block
+    conv = Conv2D if n_dim == 2 else Conv3D
 
     input = Input(input_shape, name="input")
-    unet = unet_block(n_depth, n_filter_base, kernel_size,
+    unet = unet_block(n_depth, n_filter_base, kernel_size, input_planes=input_shape[-1],
                       activation=activation, dropout=dropout, batch_norm=batch_norm,
                       n_conv_per_depth=n_conv_per_depth, pool=pool_size)(input)
 
@@ -91,8 +92,6 @@ def uxnet(input_shape,
     :param eps_scale:
     :return: Model
     """
-
-    print(share_middle)
 
     # Define vars
     channel_axis = -1 if backend_channels_last() else 1
@@ -192,7 +191,6 @@ def common_unet(n_dim=2, n_depth=1, kern_size=3, n_first=16, n_channel_out=1,
 
 def common_uxnet(n_dim=2, n_depth=1, kern_size=3, n_first=16,
                  residual=True, prob_out=False, last_activation='linear', share_middle=False):
-    print(share_middle)
     def _build_this(input_shape):
         return uxnet(input_shape=input_shape, last_activation=last_activation, n_depth=n_depth, n_filter_base=n_first,
                      kernel_size=(kern_size,)*n_dim, pool_size=(2,)*n_dim,
