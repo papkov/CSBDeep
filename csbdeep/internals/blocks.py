@@ -146,11 +146,14 @@ def unet_block(n_depth=2,
         # middle
         if shared_middle is None:
             for i in range(n_conv_per_depth - 1):
+                # Calculate last dim of conv input shape
+                last_dim = filters if i == 0 else filters * 2
+
                 layer = conv_block(n_filter_base * 2 ** n_depth, *kernel_size,
                                    dropout=dropout,
                                    activation=activation,
                                    batch_norm=batch_norm,
-                                   input_shape=(None,)*n_dim + (filters,),
+                                   input_shape=(None,)*n_dim + (last_dim,),
                                    name=_name("middle_%s" % i))(layer)
             # TODO should it be n_conv_per_depth-1 for name?
             layer = conv_block(n_filter_base * 2 ** max(0, n_depth - 1), *kernel_size,
@@ -207,31 +210,33 @@ def unet_blocks(n_blocks=1,
                 pool=(2, 2),
                 prefix=''):
 
-    # TODO Implement depth, batch norm, padding, init and dropout selection for the middle layer
-    # Now depth 2 is hardcoded, no batch norm and dropout
-    def get_shared_middle():
-        n_dim = len(kernel_size)
-        # conv_block = conv_block2 if n_dim == 2 else conv_block3
-        #
-        # def _name(s):
-        #     return prefix + s
+    n_dim = len(kernel_size)
 
-        layer = Sequential([Conv2D(n_filter_base * 2 ** n_depth, kernel_size,
-                                   activation=activation,
-                                   padding='same',
-                                   kernel_initializer='glorot_uniform',
-                                   input_shape=(None,)*n_dim + (n_filter_base * 2 ** max(0, n_depth - 1),),
-                                   name='middle_0'),
-                            Conv2D(n_filter_base * 2 ** max(0, n_depth - 1), kernel_size,
-                                   activation=activation,
-                                   padding='same',
-                                   kernel_initializer='glorot_uniform',
-                                   name='middle_1')])
+    # Shared layers default
+    downsample = None
+    middle = None
+    upsample = None
 
-        return layer
+    # Shared middle layer
+    if share_middle:
+        filters = n_filter_base * 2 ** n_depth
+        middle = Sequential(name='middle_filters_{}'.format('_'.join([filters] * (n_conv_per_depth - 1) + [filters // 2])))
 
-    # Build shared middle layer
-    shared_middle = get_shared_middle() if share_middle else None
+        for i in range(n_conv_per_depth - 1):
+            last_dim = n_filter_base * 2 ** max(0, n_depth - 1) if i == 0 else filters
+            middle.add(conv_block(filters, *kernel_size,
+                                  activation=activation,
+                                  batch_norm=batch_norm,
+                                  dropout=dropout,
+                                  input_shape=(None,)*n_dim + (last_dim,),
+                                  name='middle_{}'.format(i)))
+
+        middle.add(conv_block(n_filter_base * 2 ** max(0, n_depth - 1), *kernel_size,
+                              activation=activation,
+                              batch_norm=batch_norm,
+                              dropout=dropout,
+                              input_shape=(None,)*n_dim + (filters,),
+                              name='middle_{}'.format(n_conv_per_depth - 1)))
 
     blocks = [unet_block(n_depth=n_depth,
                          n_filter_base=n_filter_base,
@@ -242,7 +247,7 @@ def unet_blocks(n_blocks=1,
                          batch_norm=batch_norm,
                          dropout=dropout,
                          last_activation=last_activation,
-                         shared_middle=shared_middle,
+                         shared_middle=middle,
                          pool=pool,
                          prefix='{}U{}_'.format(prefix, i))
               for i in range(n_blocks)]

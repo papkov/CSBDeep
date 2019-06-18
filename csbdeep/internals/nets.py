@@ -76,8 +76,6 @@ def uxnet(input_shape,
     """
     Multi-body U-Net which learns identity by leaving one plane out in each branch
 
-    TODO: fill params
-
     :param input_shape:
     :param n_depth:
     :param n_filter_base:
@@ -92,6 +90,7 @@ def uxnet(input_shape,
     :param eps_scale:
     :return: Model
     """
+    # TODO: fill params
 
     # Define vars
     channel_axis = -1 if backend_channels_last() else 1
