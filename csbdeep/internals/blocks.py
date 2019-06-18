@@ -98,28 +98,33 @@ def unet_block(n_depth=2,
                batch_norm=False,
                dropout=0.0,
                last_activation=None,
-               shared_middle=None,
                pool=(2, 2),
                prefix=''):
 
+    # Constants
+    n_dim = len(kernel_size)
+    channel_axis = -1 if backend_channels_last() else 1
+
+
+    # If sizes do not match, raise errors
     if len(pool) != len(kernel_size):
         raise ValueError('kernel and pool sizes must match.')
-    n_dim = len(kernel_size)
     if n_dim not in (2, 3):
         raise ValueError('unet_block only 2d or 3d.')
 
+    # Pick appropriate layers
     pooling = MaxPooling2D if n_dim == 2 else MaxPooling3D
     upsampling = UpSampling2D if n_dim == 2 else UpSampling3D
 
+    # Set up activation function
     if last_activation is None:
         last_activation = activation
-
-    channel_axis = -1 if backend_channels_last() else 1
 
     def _name(s):
         return prefix+s
 
     def _func(layer):
+        conv_counter = 0
         skip_layers = []
 
         # down ...
@@ -140,30 +145,29 @@ def unet_block(n_depth=2,
                                    batch_norm=batch_norm,
                                    input_shape=(None,)*n_dim + (last_dim,),
                                    name=_name("down_level_%s_no_%s" % (n, i)))(layer)
+                conv_counter += 1
+
             skip_layers.append(layer)
             layer = pooling(pool, name=_name("max_%s" % n))(layer)
 
         # middle
-        if shared_middle is None:
-            for i in range(n_conv_per_depth - 1):
-                # Calculate last dim of conv input shape
-                last_dim = filters if i == 0 else filters * 2
+        for i in range(n_conv_per_depth - 1):
+            # Calculate last dim of conv input shape
+            last_dim = filters if i == 0 else filters * 2
 
-                layer = conv_block(n_filter_base * 2 ** n_depth, *kernel_size,
-                                   dropout=dropout,
-                                   activation=activation,
-                                   batch_norm=batch_norm,
-                                   input_shape=(None,)*n_dim + (last_dim,),
-                                   name=_name("middle_%s" % i))(layer)
-            # TODO should it be n_conv_per_depth-1 for name?
-            layer = conv_block(n_filter_base * 2 ** max(0, n_depth - 1), *kernel_size,
+            layer = conv_block(n_filter_base * 2 ** n_depth, *kernel_size,
                                dropout=dropout,
                                activation=activation,
                                batch_norm=batch_norm,
-                               input_shape=(None,)*n_dim + (filters * 2,),
-                               name=_name("middle_%s" % n_conv_per_depth))(layer)
-        else:
-            layer = shared_middle(layer)
+                               input_shape=(None,)*n_dim + (last_dim,),
+                               name=_name("middle_%s" % i))(layer)
+        # TODO should it be n_conv_per_depth-1 for name?
+        layer = conv_block(n_filter_base * 2 ** max(0, n_depth - 1), *kernel_size,
+                           dropout=dropout,
+                           activation=activation,
+                           batch_norm=batch_norm,
+                           input_shape=(None,)*n_dim + (filters * 2,),
+                           name=_name("middle_%s" % n_conv_per_depth))(layer)
 
         # ...and up with skip layers
         for n in reversed(range(n_depth)):
@@ -206,51 +210,164 @@ def unet_blocks(n_blocks=1,
                 batch_norm=False,
                 dropout=0.0,
                 last_activation=None,
-                share_middle=False,
-                pool=(2, 2),
-                prefix=''):
+                shared_idx=[],
+                pool=(2, 2)):
 
+    # Constants
     n_dim = len(kernel_size)
+    channel_axis = -1 if backend_channels_last() else 1
+    input_planes = n_blocks - 1
 
-    # Shared layers default
-    downsample = None
-    middle = None
-    upsample = None
+    # If sizes do not match, raise errors
+    if len(pool) != len(kernel_size):
+        raise ValueError('kernel and pool sizes must match.')
+    if n_dim not in (2, 3):
+        raise ValueError('unet_block only 2d or 3d.')
 
-    # Shared middle layer
-    if share_middle:
-        filters = n_filter_base * 2 ** n_depth
-        middle = Sequential(name='middle_filters_{}'.format('_'.join([filters] * (n_conv_per_depth - 1) + [filters // 2])))
+    # Pick appropriate layers
+    pooling = MaxPooling2D if n_dim == 2 else MaxPooling3D
+    upsampling = UpSampling2D if n_dim == 2 else UpSampling3D
 
-        for i in range(n_conv_per_depth - 1):
-            last_dim = n_filter_base * 2 ** max(0, n_depth - 1) if i == 0 else filters
-            middle.add(conv_block(filters, *kernel_size,
-                                  activation=activation,
-                                  batch_norm=batch_norm,
-                                  dropout=dropout,
-                                  input_shape=(None,)*n_dim + (last_dim,),
-                                  name='middle_{}'.format(i)))
+    # Set up activation function
+    if last_activation is None:
+        last_activation = activation
 
-        middle.add(conv_block(n_filter_base * 2 ** max(0, n_depth - 1), *kernel_size,
-                              activation=activation,
-                              batch_norm=batch_norm,
-                              dropout=dropout,
-                              input_shape=(None,)*n_dim + (filters,),
-                              name='middle_{}'.format(n_conv_per_depth - 1)))
+    shared_layers = []
 
-    blocks = [unet_block(n_depth=n_depth,
-                         n_filter_base=n_filter_base,
-                         kernel_size=kernel_size,
-                         input_planes=n_blocks-1,
-                         n_conv_per_depth=n_conv_per_depth,
-                         activation=activation,
-                         batch_norm=batch_norm,
-                         dropout=dropout,
-                         last_activation=last_activation,
-                         shared_middle=middle,
-                         pool=pool,
-                         prefix='{}U{}_'.format(prefix, i))
-              for i in range(n_blocks)]
+    def _func(layer):
+        _func.counter += 1
+        conv_counter = 0
+        skip_layers = []
+        # down ...
+        for n in range(n_depth):
+
+            filters = n_filter_base * 2 ** n
+
+            for i in range(n_conv_per_depth):
+
+                # Calculate last dim of conv input shape
+                last_dim = filters
+                if i == 0:
+                    last_dim = input_planes if n == 0 else filters // 2
+
+                # print('down input {}, output {}'.format(last_dim, filters))
+
+                # Create conv block (Sequential)
+                cb = conv_block(filters, *kernel_size,
+                                dropout=dropout,
+                                activation=activation,
+                                batch_norm=batch_norm,
+                                input_shape=(None,) * n_dim + (last_dim,),
+                                name="U{}_down_level_{}_no_{}".format(_func.counter, n, i))
+
+                # If we share this conv block, take it from shared layers instead:
+                if conv_counter in shared_idx:
+                    # We might not find this block, than we need to init it
+                    try:
+                        cb = shared_layers[conv_counter]
+                    except IndexError:
+                        shared_layers.append(cb)
+                # If we don't share, append None instead to keep indices aligned
+                else:
+                    shared_layers.append(None)
+
+                layer = cb(layer)
+                conv_counter += 1
+
+            skip_layers.append(layer)
+            layer = pooling(pool, name="U{}_max_{}".format(_func.counter, n))(layer)
+
+        # middle
+        for i in range(n_conv_per_depth):
+            # Calculate last dim of conv input shape
+            last_dim = filters
+            filters = n_filter_base * 2 ** (n_depth if i != (n_conv_per_depth - 1) else max(0, n_depth - 1))
+
+            # print('middle input {}, output {}'.format(last_dim, filters))
+
+            cb = conv_block(filters,
+                            *kernel_size,
+                            dropout=dropout,
+                            activation=activation,
+                            batch_norm=batch_norm,
+                            input_shape=(None,) * n_dim + (last_dim,),
+                            name="U{}_middle_{}".format(_func.counter, i))
+
+            # If we share this conv block, take it from shared layers instead:
+            if conv_counter in shared_idx:
+                # We might not find this block, than we need to init it
+                try:
+                    cb = shared_layers[conv_counter]
+                except IndexError:
+                    shared_layers.append(cb)
+            # If we don't share, append None instead to keep indices aligned
+            else:
+                shared_layers.append(None)
+
+            layer = cb(layer)
+            conv_counter += 1
+
+        # ...and up with skip layers
+        for n in reversed(range(n_depth)):
+
+            layer = Concatenate(axis=channel_axis)([upsampling(pool)(layer), skip_layers[n]])
+            filters = n_filter_base * 2 ** n
+
+            for i in range(n_conv_per_depth):
+
+                # Calculate last dim of conv input shape
+                last_dim = filters
+                if i == 0:
+                    last_dim = filters * 2
+
+                filters = filters if i < n_conv_per_depth - 1 else n_filter_base * 2 ** max(0, n - 1)
+
+                # print('up input {}, output {}'.format(last_dim, filters))
+
+                cb = conv_block(filters, *kernel_size,
+                                dropout=dropout,
+                                activation=activation if (n > 0) and (i == n_conv_per_depth - 1) else last_activation,
+                                batch_norm=batch_norm,
+                                input_shape=(None,) * n_dim + (last_dim,),
+                                name="U{}_up_level_{}_no_{}".format(_func.counter, n, i))
+
+                # If we share this conv block, take it from shared layers instead:
+                if conv_counter in shared_idx:
+                    # We might not find this block, than we need to init it
+                    try:
+                        cb = shared_layers[conv_counter]
+                    except IndexError:
+                        shared_layers.append(cb)
+                # If we don't share, append None instead to keep indices aligned
+                else:
+                    shared_layers.append(None)
+
+                layer = cb(layer)
+                conv_counter += 1
+
+        return layer
+    _func.counter = 0
+
+    blocks = []
+    for k in range(n_blocks):
+        blocks.append(_func)
+    # blocks = [_func for _ in range(n_blocks)]
+
+    #
+    # blocks = [unet_block(n_depth=n_depth,
+    #                      n_filter_base=n_filter_base,
+    #                      kernel_size=kernel_size,
+    #                      input_planes=n_blocks-1,
+    #                      n_conv_per_depth=n_conv_per_depth,
+    #                      activation=activation,
+    #                      batch_norm=batch_norm,
+    #                      dropout=dropout,
+    #                      last_activation=last_activation,
+    #                      pool=pool,
+    #                      prefix='{}U{}_'.format(prefix, i))
+    #           for i in range(n_blocks)]
 
     return blocks
+
+
 

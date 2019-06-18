@@ -15,5 +15,5 @@ class MultiplaneCARE(CARE):
             kern_size=self.config.unet_kern_size,
             n_first=self.config.unet_n_first,
             last_activation=self.config.unet_last_activation,
-            share_middle=self.config.share_middle,
+            shared_idx=self.config.shared_idx,
         )(self.config.unet_input_shape)

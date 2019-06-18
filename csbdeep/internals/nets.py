@@ -69,7 +69,7 @@ def uxnet(input_shape,
           dropout=0.0,
           pool_size=(2, 2),
           residual=True,
-          share_middle=False,
+          shared_idx=[],
           prob_out=False,
           eps_scale=1e-3):
 
@@ -110,7 +110,7 @@ def uxnet(input_shape,
     # Create U-Net blocks (by number of planes)
     unet_x = unet_blocks(n_blocks=n_planes, n_depth=n_depth, n_filter_base=n_filter_base, kernel_size=kernel_size,
                          activation=activation, dropout=dropout, batch_norm=batch_norm,
-                         n_conv_per_depth=n_conv_per_depth, pool=pool_size, share_middle=share_middle)
+                         n_conv_per_depth=n_conv_per_depth, pool=pool_size, shared_idx=shared_idx)
     unet_x = [unet(inp_out) for unet, inp_out in zip(unet_x, input_x_out)]
 
     # Version without weight sharing:
@@ -119,6 +119,7 @@ def uxnet(input_shape,
     #                      n_conv_per_depth=n_conv_per_depth, pool=pool_size,
     #                      prefix='out_{}_'.format(i))(inp_out) for i, inp_out in enumerate(input_x_out)]
 
+    # TODO: rewrite for sharing
     # Convolve n_filter_base to 1 as each U-Net predicts a single plane
     unet_x = [conv(1, (1,) * n_dim, activation=activation)(unet) for unet in unet_x]
 
@@ -189,11 +190,11 @@ def common_unet(n_dim=2, n_depth=1, kern_size=3, n_first=16, n_channel_out=1,
 
 
 def common_uxnet(n_dim=2, n_depth=1, kern_size=3, n_first=16,
-                 residual=True, prob_out=False, last_activation='linear', share_middle=False):
+                 residual=True, prob_out=False, last_activation='linear', shared_idx=[]):
     def _build_this(input_shape):
         return uxnet(input_shape=input_shape, last_activation=last_activation, n_depth=n_depth, n_filter_base=n_first,
                      kernel_size=(kern_size,)*n_dim, pool_size=(2,)*n_dim,
-                     residual=residual, prob_out=prob_out, share_middle=share_middle)
+                     residual=residual, prob_out=prob_out, shared_idx=shared_idx)
     return _build_this
 
 
