@@ -83,7 +83,7 @@ def conv_block(n_filter, n1, n2,
         layers.append(Dropout(dropout))
 
     # Unite layers in Sequential model under the name of Conv layer
-    layers = Sequential(layers, name='{:02d}_{}'.format(conv_block.counter, name))
+    layers = Sequential(layers, name='{:03d}_{}'.format(conv_block.counter, name))
 
     return layers
 conv_block.counter = 0  # Enumerate conv layer
@@ -202,6 +202,8 @@ def unet_block(n_depth=2,
 
 
 def unet_blocks(n_blocks=1,
+                input_planes=1,
+                output_planes=1,
                 n_depth=2,
                 n_filter_base=16,
                 kernel_size=(3, 3),
@@ -216,7 +218,6 @@ def unet_blocks(n_blocks=1,
     # Constants
     n_dim = len(kernel_size)
     channel_axis = -1 if backend_channels_last() else 1
-    input_planes = n_blocks - 1
 
     # If sizes do not match, raise errors
     if len(pool) != len(kernel_size):
@@ -232,12 +233,15 @@ def unet_blocks(n_blocks=1,
     if last_activation is None:
         last_activation = activation
 
+    # TODO write a wrapper for adding a shared layer
     shared_layers = []
 
     def _func(layer):
         _func.counter += 1
         conv_counter = 0
         skip_layers = []
+        filters = n_filter_base
+
         # down ...
         for n in range(n_depth):
 
@@ -326,6 +330,7 @@ def unet_blocks(n_blocks=1,
 
                 cb = conv_block(filters, *kernel_size,
                                 dropout=dropout,
+                                # TODO remove last_activation here?
                                 activation=activation if (n > 0) and (i == n_conv_per_depth - 1) else last_activation,
                                 batch_norm=batch_norm,
                                 input_shape=(None,) * n_dim + (last_dim,),
@@ -345,13 +350,28 @@ def unet_blocks(n_blocks=1,
                 layer = cb(layer)
                 conv_counter += 1
 
+        # Combine output to produce output_planes = input_planes
+        cb = conv_block(output_planes, 1, 1,
+                        n3=1 if n_dim == 3 else None,
+                        activation=activation,
+                        batch_norm=batch_norm,
+                        input_shape=(None,) * n_dim + (filters,),
+                        name="U{}_last_conv".format(_func.counter))
+        if conv_counter in shared_idx:
+            # We might not find this block, than we need to init it
+            try:
+                cb = shared_layers[conv_counter]
+            except IndexError:
+                shared_layers.append(cb)
+        # If we don't share, append None instead to keep indices aligned
+        else:
+            shared_layers.append(None)
+
+        layer = cb(layer)
         return layer
     _func.counter = 0
 
-    blocks = []
-    for k in range(n_blocks):
-        blocks.append(_func)
-    # blocks = [_func for _ in range(n_blocks)]
+    blocks = [_func for _ in range(n_blocks)]
 
     #
     # blocks = [unet_block(n_depth=n_depth,

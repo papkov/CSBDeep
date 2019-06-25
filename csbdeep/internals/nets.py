@@ -91,6 +91,7 @@ def uxnet(input_shape,
     :return: Model
     """
     # TODO: fill params
+    # TODO: add odd-to-even mode
 
     # Define vars
     channel_axis = -1 if backend_channels_last() else 1
@@ -108,7 +109,8 @@ def uxnet(input_shape,
     input_x_out = [Concatenate(axis=-1)([plane for i, plane in enumerate(input_x) if i != j]) for j in range(n_planes)]
 
     # Create U-Net blocks (by number of planes)
-    unet_x = unet_blocks(n_blocks=n_planes, n_depth=n_depth, n_filter_base=n_filter_base, kernel_size=kernel_size,
+    unet_x = unet_blocks(n_blocks=n_planes, input_planes=n_planes-1, output_planes=1, n_depth=n_depth,
+                         n_filter_base=n_filter_base, kernel_size=kernel_size,
                          activation=activation, dropout=dropout, batch_norm=batch_norm,
                          n_conv_per_depth=n_conv_per_depth, pool=pool_size, shared_idx=shared_idx)
     unet_x = [unet(inp_out) for unet, inp_out in zip(unet_x, input_x_out)]
@@ -119,16 +121,16 @@ def uxnet(input_shape,
     #                      n_conv_per_depth=n_conv_per_depth, pool=pool_size,
     #                      prefix='out_{}_'.format(i))(inp_out) for i, inp_out in enumerate(input_x_out)]
 
-    # TODO: rewrite for sharing
+    # TODO: rewritten for sharing -- remove commented below
     # Convolve n_filter_base to 1 as each U-Net predicts a single plane
-    unet_x = [conv(1, (1,) * n_dim, activation=activation)(unet) for unet in unet_x]
-
+    # unet_x = [conv(1, (1,) * n_dim, activation=activation)(unet) for unet in unet_x]
 
     # For residual U-Net sum up output with its neighbor (next for the first plane, previous for the rest
     if residual:
         unet_x = [Add()([unet, inp]) for unet, inp in zip(unet_x, [input_x[1]]+input_x[:-1])]
 
     # Concatenate outputs of blocks, should receive (None, None, None, n_planes)
+    # TODO assert to check shape?
     unet = Concatenate(axis=-1)(unet_x)
 
     # Final activation layer
