@@ -7,7 +7,7 @@ from keras.layers import Dropout, Activation, BatchNormalization
 from keras.layers import Conv2D, MaxPooling2D, UpSampling2D, Conv3D, MaxPooling3D, UpSampling3D
 from keras.layers.merge import Concatenate
 from keras.models import Sequential
-
+from keras.initializers import glorot_uniform
 
 # TODO deprecate
 def conv_block2(n_filter, n1, n2,
@@ -63,6 +63,7 @@ def conv_block(n_filter, n1, n2,
                batch_norm=False,
                init="glorot_uniform",
                name='conv_block_seq',
+               seed=None,
                **kwargs):
 
     # TODO ugly call counting solution, rewrite as a decorator
@@ -70,11 +71,12 @@ def conv_block(n_filter, n1, n2,
     n_dim = 2 if n3 is None else 3
 
     # Select parameters by dimensionality
-    conv = Conv2D if n_dim == 2 else Conv3D()
+    conv = Conv2D if n_dim == 2 else Conv3D
     kernel_size = (n1, n2) if n_dim == 2 else (n1, n2, n3)
 
     # Fill list of layers
-    layers = [conv(n_filter, kernel_size, padding=border_mode, kernel_initializer=init,
+    layers = [conv(n_filter, kernel_size, padding=border_mode,
+                   kernel_initializer=glorot_uniform(seed=seed) if init == "glorot_uniform" else init,
                    activation=None if batch_norm else activation, **kwargs)]
     if batch_norm:
         layers.append(BatchNormalization())
@@ -97,6 +99,8 @@ def unet_block(n_depth=2,
                activation="relu",
                batch_norm=False,
                dropout=0.0,
+               same_seed=False,
+               base_seed=0,
                last_activation=None,
                pool=(2, 2),
                prefix=''):
@@ -104,7 +108,6 @@ def unet_block(n_depth=2,
     # Constants
     n_dim = len(kernel_size)
     channel_axis = -1 if backend_channels_last() else 1
-
 
     # If sizes do not match, raise errors
     if len(pool) != len(kernel_size):
@@ -144,6 +147,7 @@ def unet_block(n_depth=2,
                                    activation=activation,
                                    batch_norm=batch_norm,
                                    input_shape=(None,)*n_dim + (last_dim,),
+                                   seed=base_seed+conv_counter if same_seed else None,
                                    name=_name("down_level_%s_no_%s" % (n, i)))(layer)
                 conv_counter += 1
 
@@ -160,6 +164,7 @@ def unet_block(n_depth=2,
                                activation=activation,
                                batch_norm=batch_norm,
                                input_shape=(None,)*n_dim + (last_dim,),
+                               seed=base_seed+conv_counter if same_seed else None,
                                name=_name("middle_%s" % i))(layer)
         # TODO should it be n_conv_per_depth-1 for name?
         layer = conv_block(n_filter_base * 2 ** max(0, n_depth - 1), *kernel_size,
@@ -167,6 +172,7 @@ def unet_block(n_depth=2,
                            activation=activation,
                            batch_norm=batch_norm,
                            input_shape=(None,)*n_dim + (filters * 2,),
+                           seed=base_seed+conv_counter if same_seed else None,
                            name=_name("middle_%s" % n_conv_per_depth))(layer)
 
         # ...and up with skip layers
@@ -187,6 +193,7 @@ def unet_block(n_depth=2,
                                    activation=activation,
                                    batch_norm=batch_norm,
                                    input_shape=(None,)*n_dim + (last_dim,),
+                                   seed=base_seed+conv_counter if same_seed else None,
                                    name=_name("up_level_%s_no_%s" % (n, i)))(layer)
 
             layer = conv_block(n_filter_base * 2 ** max(0, n - 1), *kernel_size,
@@ -194,6 +201,7 @@ def unet_block(n_depth=2,
                                activation=activation if n > 0 else last_activation,
                                batch_norm=batch_norm,
                                input_shape=(None,)*n_dim + (filters,),
+                               seed=base_seed+conv_counter if same_seed else None,
                                name=_name("up_level_%s_no_%s" % (n, n_conv_per_depth)))(layer)
 
         return layer
@@ -211,9 +219,13 @@ def unet_blocks(n_blocks=1,
                 activation="relu",
                 batch_norm=False,
                 dropout=0.0,
+                same_seed=True,
+                base_seed=0,
                 last_activation=None,
                 shared_idx=[],
                 pool=(2, 2)):
+
+    # TODO write initialization tests
 
     # Constants
     n_dim = len(kernel_size)
@@ -262,6 +274,7 @@ def unet_blocks(n_blocks=1,
                                 activation=activation,
                                 batch_norm=batch_norm,
                                 input_shape=(None,) * n_dim + (last_dim,),
+                                seed=base_seed+conv_counter if same_seed else None,
                                 name="U{}_down_level_{}_no_{}".format(_func.counter, n, i))
 
                 # If we share this conv block, take it from shared layers instead:
@@ -295,6 +308,7 @@ def unet_blocks(n_blocks=1,
                             activation=activation,
                             batch_norm=batch_norm,
                             input_shape=(None,) * n_dim + (last_dim,),
+                            seed=base_seed+conv_counter if same_seed else None,
                             name="U{}_middle_{}".format(_func.counter, i))
 
             # If we share this conv block, take it from shared layers instead:
@@ -334,6 +348,7 @@ def unet_blocks(n_blocks=1,
                                 activation=activation if (n > 0) and (i == n_conv_per_depth - 1) else last_activation,
                                 batch_norm=batch_norm,
                                 input_shape=(None,) * n_dim + (last_dim,),
+                                seed=base_seed+conv_counter if same_seed else None,
                                 name="U{}_up_level_{}_no_{}".format(_func.counter, n, i))
 
                 # If we share this conv block, take it from shared layers instead:
@@ -356,6 +371,7 @@ def unet_blocks(n_blocks=1,
                         activation=activation,
                         batch_norm=batch_norm,
                         input_shape=(None,) * n_dim + (filters,),
+                        seed=base_seed+conv_counter if same_seed else None,
                         name="U{}_last_conv".format(_func.counter))
         if conv_counter in shared_idx:
             # We might not find this block, than we need to init it
@@ -372,7 +388,7 @@ def unet_blocks(n_blocks=1,
     _func.counter = 0
 
     blocks = [_func for _ in range(n_blocks)]
-
+    #
     #
     # blocks = [unet_block(n_depth=n_depth,
     #                      n_filter_base=n_filter_base,
