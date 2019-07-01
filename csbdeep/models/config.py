@@ -71,7 +71,7 @@ class Config(argparse.Namespace):
         .. _ReduceLROnPlateau: https://keras.io/callbacks/#reducelronplateau
     """
 
-    def __init__(self, n_dim, axes, n_channel_in=1, n_channel_out=1, probabilistic=False, **kwargs):
+    def __init__(self, n_dim, axes, n_channel_in=1, n_channel_out=1, probabilistic=False, loss='mae', **kwargs):
         """See class docstring."""
 
         # parse and check axes
@@ -119,7 +119,7 @@ class Config(argparse.Namespace):
         else:
             self.unet_input_shape  = (self.n_channel_in,) + self.n_dim*(None,)
 
-        self.train_loss            = 'laplace' if self.probabilistic else 'mae'
+        self.train_loss            = 'laplace' if self.probabilistic else loss
         self.train_epochs          = 100
         self.train_steps_per_epoch = 400
         self.train_learning_rate   = 0.0004
@@ -184,7 +184,7 @@ class Config(argparse.Namespace):
         )
         ok['train_loss'] = (
             (    self.probabilistic and self.train_loss == 'laplace'   ) or
-            (not self.probabilistic and self.train_loss in ('mse','mae'))
+            (not self.probabilistic and self.train_loss in ('mse', 'mae', 'ssim'))
         )
         ok['train_epochs']          = _is_int(self.train_epochs,1)
         ok['train_steps_per_epoch'] = _is_int(self.train_steps_per_epoch,1)
