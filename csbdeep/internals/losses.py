@@ -13,7 +13,7 @@ def _mean_or_not(mean):
     return (lambda x: K.mean(x, axis=-1)) if mean else (lambda x: x)
 
 
-def loss_laplace(mean=True):
+def loss_laplace(mean=True, **kwargs):
     R = _mean_or_not(mean)
     C = np.log(2.0)
     if backend_channels_last():
@@ -32,7 +32,7 @@ def loss_laplace(mean=True):
         return nll
 
 
-def loss_mae(mean=True):
+def loss_mae(mean=True, **kwargs):
     R = _mean_or_not(mean)
     if backend_channels_last():
         def mae(y_true, y_pred):
@@ -46,7 +46,7 @@ def loss_mae(mean=True):
         return mae
 
 
-def loss_mse(mean=True):
+def loss_mse(mean=True, **kwargs):
     R = _mean_or_not(mean)
     if backend_channels_last():
         def mse(y_true, y_pred):
@@ -60,7 +60,7 @@ def loss_mse(mean=True):
         return mse
 
 
-def loss_thresh_weighted_decay(loss_per_pixel, thresh, w1, w2, alpha):
+def loss_thresh_weighted_decay(loss_per_pixel, thresh, w1, w2, alpha, **kwargs):
     def _loss(y_true, y_pred):
         val = loss_per_pixel(y_true, y_pred)
         k1 = alpha * w1 + (1 - alpha)
@@ -70,7 +70,7 @@ def loss_thresh_weighted_decay(loss_per_pixel, thresh, w1, w2, alpha):
     return _loss
 
 
-def loss_ssim(k1=0.01, k2=0.03, ksize=3, stride=2, rate=1, padding='VALID'):
+def loss_ssim(k1=0.01, k2=0.03, ksize=3, stride=2, rate=1, padding='VALID', patch_size=64):
     # TODO: implement channels first as well, currently only channels last
 
     def ssim(y_true, y_pred):
@@ -82,9 +82,8 @@ def loss_ssim(k1=0.01, k2=0.03, ksize=3, stride=2, rate=1, padding='VALID'):
         # TODO: remove hardcoded values -- currently patch extractor cannot work with None shapes
         # y_pred = K.reshape(y_pred, [-1] + list(K.int_shape(y_pred)[1:]))
         # y_true = K.reshape(y_true, [-1] + list(K.int_shape(y_true)[1:]))
-
-        y_pred = K.reshape(y_pred, [-1, 64, 64, 9])
-        y_true = K.reshape(y_true, [-1, 64, 64, 9])
+        y_pred = K.reshape(y_pred, [-1, patch_size, patch_size]+[K.int_shape(y_pred)[-1]])
+        y_true = K.reshape(y_true, [-1, patch_size, patch_size]+[K.int_shape(y_pred)[-1]])
 
         patches_true = K.tf.extract_image_patches(
             images=y_true,

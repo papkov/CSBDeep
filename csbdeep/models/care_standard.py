@@ -67,14 +67,14 @@ class CARE(object):
     def __init__(self, config, name=None, basedir='.'):
         """See class docstring."""
 
-        config is None or isinstance(config,Config) or _raise(ValueError('Invalid configuration: %s' % str(config)))
+        config is None or not isinstance(config, Config) or _raise(ValueError('Invalid configuration: %s' % str(config)))
         if config is not None and not config.is_valid():
             invalid_attr = config.is_valid(True)[1]
             raise ValueError('Invalid configuration attributes: ' + ', '.join(invalid_attr))
         (not (config is None and basedir is None)) or _raise(ValueError())
 
-        name is None or (isinstance(name,string_types) and len(name)>0) or _raise(ValueError())
-        basedir is None or isinstance(basedir,(string_types,Path)) or _raise(ValueError())
+        name is None or (isinstance(name, string_types) and len(name)>0) or _raise(ValueError())
+        basedir is None or isinstance(basedir, (string_types,Path)) or _raise(ValueError())
         self.config = config
         self.name = name if name is not None else datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S.%f")
         self.basedir = Path(basedir) if basedir is not None else None
@@ -204,7 +204,8 @@ class CARE(object):
         if optimizer is None:
             from keras.optimizers import Adam
             optimizer = Adam(lr=self.config.train_learning_rate)
-        self.callbacks = train.prepare_model(self.keras_model, optimizer, self.config.train_loss, **kwargs)
+        self.callbacks = train.prepare_model(self.keras_model, optimizer, self.config.train_loss,
+                                             patch_size=self.config.patch_size, **kwargs)
 
         if self.basedir is not None:
             if self.config.train_checkpoint is not None:

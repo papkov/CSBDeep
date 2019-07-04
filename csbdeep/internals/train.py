@@ -31,15 +31,15 @@ class ParameterDecayCallback(Callback):
             print("\n[ParameterDecayCallback] new %s: %s\n" % (self.name if self.name else 'parameter', new_val))
 
 
-def prepare_model(model, optimizer, loss, metrics=('mse', 'mae', 'ssim'),
+def prepare_model(model, optimizer, loss, metrics=('mse', 'mae', 'ssim'), patch_size=64,
                   loss_bg_thresh=0, loss_bg_decay=0.06, Y=None):
     """ TODO """
 
     from keras.optimizers import Optimizer
     isinstance(optimizer, Optimizer) or _raise(ValueError())
 
-    loss_standard = eval('loss_%s()' % loss)
-    _metrics = [eval('loss_%s()' % m) for m in metrics]
+    loss_standard = eval('loss_%s' % loss)(patch_size=patch_size)
+    _metrics = [eval('loss_%s' % m)(patch_size=patch_size) for m in metrics]
     callbacks = [TerminateOnNaN()]
 
     # checks
