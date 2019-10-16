@@ -66,8 +66,8 @@ class CARE(object):
 
     def __init__(self, config, name=None, basedir='.'):
         """See class docstring."""
-
-        config is None or not isinstance(config, Config) or _raise(ValueError('Invalid configuration: %s' % str(config)))
+        # TODO how to handle it properly?
+        #config is None or not isinstance(config, Config) or _raise(ValueError('Invalid configuration: %s' % str(config)))
         if config is not None and not config.is_valid():
             invalid_attr = config.is_valid(True)[1]
             raise ValueError('Invalid configuration attributes: ' + ', '.join(invalid_attr))

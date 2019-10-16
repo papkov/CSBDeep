@@ -69,6 +69,7 @@ def uxnet(input_shape,
           dropout=0.0,
           pool_size=(2, 2),
           residual=True,
+          odd_to_even=False,
           shared_idx=[],
           prob_out=False,
           eps_scale=1e-3):
@@ -96,6 +97,8 @@ def uxnet(input_shape,
     # Define vars
     channel_axis = -1 if backend_channels_last() else 1
     n_planes = input_shape[channel_axis]
+    if n_planes % 2 != 0 and odd_to_even:
+        raise ValueError('Odd-to-even mode does not support uneven number of planes')
     n_dim = len(kernel_size)
     conv = Conv2D if n_dim == 2 else Conv3D
 
@@ -105,12 +108,23 @@ def uxnet(input_shape,
     # Split planes (preserve channel)
     input_x = [Lambda(lambda x: x[..., i:i+1], output_shape=(None, None, 1))(input) for i in range(n_planes)]
 
-    # Concatenate planes back in leave-one-out way
-    input_x_out = [Concatenate(axis=-1)([plane for i, plane in enumerate(input_x) if i != j]) for j in range(n_planes)]
+    # We can train either in odd-to-even mode or in LOO mode
+    if odd_to_even:
+        # In this mode we stack together odd and even planes, train the net to predict even from odd and vice versa
+        # input_x_out = [Concatenate(axis=-1)(input_x[j::2]) for j in range(2)]
+        input_x_out = [Concatenate(axis=-1)(input_x[j::2]) for j in range(1, -1, -1)]
+    else:
+        # Concatenate planes back in leave-one-out way
+        input_x_out = [Concatenate(axis=-1)([plane for i, plane in enumerate(input_x) if i != j]) for j in range(n_planes)]
+
+    # U-Net parameters depend on mode (odd-to-even or LOO)
+    n_blocks = 2 if odd_to_even else n_planes
+    input_planes = n_planes // 2 if odd_to_even else n_planes-1
+    output_planes = n_planes // 2 if odd_to_even else 1
 
     # Create U-Net blocks (by number of planes)
-    unet_x = unet_blocks(n_blocks=n_planes, input_planes=n_planes-1, output_planes=1, n_depth=n_depth,
-                         n_filter_base=n_filter_base, kernel_size=kernel_size,
+    unet_x = unet_blocks(n_blocks=n_blocks, input_planes=input_planes, output_planes=output_planes,
+                         n_depth=n_depth, n_filter_base=n_filter_base, kernel_size=kernel_size,
                          activation=activation, dropout=dropout, batch_norm=batch_norm,
                          n_conv_per_depth=n_conv_per_depth, pool=pool_size, shared_idx=shared_idx)
     unet_x = [unet(inp_out) for unet, inp_out in zip(unet_x, input_x_out)]
@@ -125,12 +139,29 @@ def uxnet(input_shape,
     # Convolve n_filter_base to 1 as each U-Net predicts a single plane
     # unet_x = [conv(1, (1,) * n_dim, activation=activation)(unet) for unet in unet_x]
 
-    # For residual U-Net sum up output with its neighbor (next for the first plane, previous for the rest
     if residual:
-        unet_x = [Add()([unet, inp]) for unet, inp in zip(unet_x, [input_x[1]]+input_x[:-1])]
+        if odd_to_even:
+            # For residual U-Net sum up output for odd planes with even planes and vice versa
+            unet_x = [Add()([unet, inp]) for unet, inp in zip(unet_x, input_x[::-1])]
+        else:
+            # For residual U-Net sum up output with its neighbor (next for the first plane, previous for the rest
+            unet_x = [Add()([unet, inp]) for unet, inp in zip(unet_x, [input_x[1]]+input_x[:-1])]
 
     # Concatenate outputs of blocks, should receive (None, None, None, n_planes)
     # TODO assert to check shape?
+
+    if odd_to_even:
+        # Split even and odd, assemble them together in the correct order
+        # TODO tests
+        unet_even = [Lambda(lambda x: x[..., i:i+1],
+                            output_shape=(None, None, 1),
+                            name='even_{}'.format(i))(unet_x[0]) for i in range(n_planes // 2)]
+        unet_odd = [Lambda(lambda x: x[..., i:i+1],
+                           output_shape=(None, None, 1),
+                           name='odd_{}'.format(i))(unet_x[1]) for i in range(n_planes // 2)]
+
+        unet_x = list(np.array(list(zip(unet_even, unet_odd))).flatten())
+
     unet = Concatenate(axis=-1)(unet_x)
 
     # Final activation layer
@@ -192,11 +223,11 @@ def common_unet(n_dim=2, n_depth=1, kern_size=3, n_first=16, n_channel_out=1,
 
 
 def common_uxnet(n_dim=2, n_depth=1, kern_size=3, n_first=16,
-                 residual=True, prob_out=False, last_activation='linear', shared_idx=[]):
+                 residual=True, prob_out=False, last_activation='linear', shared_idx=[], odd_to_even=False):
     def _build_this(input_shape):
         return uxnet(input_shape=input_shape, last_activation=last_activation, n_depth=n_depth, n_filter_base=n_first,
                      kernel_size=(kern_size,)*n_dim, pool_size=(2,)*n_dim,
-                     residual=residual, prob_out=prob_out, shared_idx=shared_idx)
+                     residual=residual, prob_out=prob_out, shared_idx=shared_idx, odd_to_even=odd_to_even)
     return _build_this
 
 
