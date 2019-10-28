@@ -16,7 +16,8 @@ class MultiplaneCARE(CARE):
             n_first=self.config.unet_n_first,
             last_activation=self.config.unet_last_activation,
             shared_idx=self.config.shared_idx,
-            odd_to_even=self.config.odd_to_even
+            odd_to_even=self.config.odd_to_even,
+            shortcut=self.config.shortcut
         )(self.config.unet_input_shape)
 
     def train(self, X, X_val, epochs=None, steps_per_epoch=None):

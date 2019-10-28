@@ -4,7 +4,9 @@ from six.moves import range, zip, map, reduce, filter
 from keras.layers import Input, Conv2D, Conv3D, Activation, Lambda
 from keras.models import Model
 from keras.layers.merge import Add, Concatenate
-from .blocks import unet_block, unet_blocks
+import tensorflow as tf
+from keras import backend as K
+from .blocks import unet_block, unet_blocks, gaussian_2d
 import re
 
 from ..utils import _raise, backend_channels_last
@@ -24,6 +26,7 @@ def custom_unet(input_shape,
                 n_channel_out=1,
                 residual=False,
                 prob_out=False,
+                long_skip=True,
                 eps_scale=1e-3):
     """ TODO """
 
@@ -41,7 +44,7 @@ def custom_unet(input_shape,
     input = Input(input_shape, name="input")
     unet = unet_block(n_depth, n_filter_base, kernel_size, input_planes=input_shape[-1],
                       activation=activation, dropout=dropout, batch_norm=batch_norm,
-                      n_conv_per_depth=n_conv_per_depth, pool=pool_size)(input)
+                      n_conv_per_depth=n_conv_per_depth, pool=pool_size, long_skip=long_skip)(input)
 
     final = conv(n_channel_out, (1,)*n_dim, activation='linear')(unet)
     if residual:
@@ -70,6 +73,7 @@ def uxnet(input_shape,
           pool_size=(2, 2),
           residual=True,
           odd_to_even=False,
+          shortcut=None,
           shared_idx=[],
           prob_out=False,
           eps_scale=1e-3):
@@ -105,6 +109,7 @@ def uxnet(input_shape,
     # Define functional model
     input = Input(shape=input_shape, name='input_main')
 
+    # TODO test new implementation and remove old
     # Split planes (preserve channel)
     input_x = [Lambda(lambda x: x[..., i:i+1], output_shape=(None, None, 1))(input) for i in range(n_planes)]
 
@@ -116,6 +121,22 @@ def uxnet(input_shape,
     else:
         # Concatenate planes back in leave-one-out way
         input_x_out = [Concatenate(axis=-1)([plane for i, plane in enumerate(input_x) if i != j]) for j in range(n_planes)]
+
+    # if odd_to_even:
+    #     input_x_out = [Lambda(lambda x: x[..., j::2],
+    #                           output_shape=(None, None, n_planes // 2),
+    #                           name='{}_planes'.format('even' if j == 0 else 'odd'))(input)
+    #                    for j in range(1, -1, -1)]
+    # else:
+    #     # input_x_out = [Lambda(lambda x: x[..., tf.convert_to_tensor([i for i in range(n_planes) if i != j], dtype=tf.int32)],
+    #     #                       output_shape=(None, None, n_planes-1),
+    #     #                       name='leave_{}_plane_out'.format(j))(input)
+    #     #                for j in range(n_planes)]
+    #
+    #     input_x_out = [Lambda(lambda x: K.concatenate([x[..., :j], x[..., (j+1):]], axis=-1),
+    #                           output_shape=(None, None, n_planes - 1),
+    #                           name='leave_{}_plane_out'.format(j))(input)
+    #         for j in range(n_planes)]
 
     # U-Net parameters depend on mode (odd-to-even or LOO)
     n_blocks = 2 if odd_to_even else n_planes
@@ -164,6 +185,28 @@ def uxnet(input_shape,
 
     unet = Concatenate(axis=-1)(unet_x)
 
+    if shortcut is not None:
+        # We can create a shortcut without long skip connection to prevent noise memorization
+        if shortcut == 'unet':
+            shortcut_block = unet_block(long_skip=False, input_planes=n_planes,
+                                       n_depth=n_depth, n_filter_base=n_filter_base, kernel_size=kernel_size,
+                                       activation=activation, dropout=dropout, batch_norm=batch_norm,
+                                       n_conv_per_depth=n_conv_per_depth, pool=pool_size)(input)
+            shortcut_block = conv(n_planes, (1,) * n_dim, activation='linear', name='shortcut_final_conv')(shortcut_block)
+
+        # Or a simple gaussian blur block
+        elif shortcut == 'gaussian':
+            shortcut_block = gaussian_2d(n_planes, k=13, s=7)(input)
+
+        else:
+            raise ValueError('Shortcut should be either unet or gaussian')
+
+        # TODO add or concatenate?
+        unet = Add()([unet, shortcut_block])
+        # unet = Concatenate(axis=-1)([unet, shortcut_unet])
+
+
+
     # Final activation layer
     final = Activation(activation=last_activation)(unet)
 
@@ -176,7 +219,7 @@ def uxnet(input_shape,
 
 
 def common_unet(n_dim=2, n_depth=1, kern_size=3, n_first=16, n_channel_out=1,
-                residual=True, prob_out=False, last_activation='linear'):
+                residual=True, prob_out=False, long_skip=True, last_activation='linear'):
     """
     Construct a common CARE neural net based on U-Net [1]_ and residual learning [2]_
     to be used for image restoration/enhancement.
@@ -218,16 +261,18 @@ def common_unet(n_dim=2, n_depth=1, kern_size=3, n_first=16, n_channel_out=1,
     """
     def _build_this(input_shape):
         return custom_unet(input_shape, last_activation, n_depth, n_first, (kern_size,)*n_dim, pool_size=(2,)*n_dim,
-                           n_channel_out=n_channel_out, residual=residual, prob_out=prob_out)
+                           n_channel_out=n_channel_out, residual=residual, prob_out=prob_out, long_skip=long_skip)
     return _build_this
 
 
 def common_uxnet(n_dim=2, n_depth=1, kern_size=3, n_first=16,
-                 residual=True, prob_out=False, last_activation='linear', shared_idx=[], odd_to_even=False):
+                 residual=True, prob_out=False, last_activation='linear',
+                 shared_idx=[], odd_to_even=False, shortcut=None):
     def _build_this(input_shape):
         return uxnet(input_shape=input_shape, last_activation=last_activation, n_depth=n_depth, n_filter_base=n_first,
                      kernel_size=(kern_size,)*n_dim, pool_size=(2,)*n_dim,
-                     residual=residual, prob_out=prob_out, shared_idx=shared_idx, odd_to_even=odd_to_even)
+                     residual=residual, prob_out=prob_out,
+                     shared_idx=shared_idx, odd_to_even=odd_to_even, shortcut=shortcut)
     return _build_this
 
 

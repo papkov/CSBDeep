@@ -129,6 +129,8 @@ class Config(argparse.Namespace):
         self.shared_idx = []
         self.patch_size = 64
         self.odd_to_even = False
+        self.shortcut = None
+        self.long_skip = True
 
         # the parameter 'min_delta' was called 'epsilon' for keras<=2.1.5
         min_delta_key = 'epsilon' if LooseVersion(keras.__version__)<=LooseVersion('2.1.5') else 'min_delta'

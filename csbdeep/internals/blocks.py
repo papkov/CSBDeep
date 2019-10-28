@@ -1,10 +1,12 @@
 from __future__ import print_function, unicode_literals, absolute_import, division
 from six.moves import range, zip, map, reduce, filter
+import numpy as np
+from scipy import stats
 
 from ..utils import _raise, backend_channels_last
 
 from keras.layers import Dropout, Activation, BatchNormalization
-from keras.layers import Conv2D, MaxPooling2D, UpSampling2D, Conv3D, MaxPooling3D, UpSampling3D
+from keras.layers import Conv2D, MaxPooling2D, UpSampling2D, Conv3D, MaxPooling3D, UpSampling3D, DepthwiseConv2D
 from keras.layers.merge import Concatenate
 from keras.models import Sequential
 from keras.initializers import glorot_uniform
@@ -102,6 +104,7 @@ def unet_block(n_depth=2,
                same_seed=False,
                base_seed=0,
                last_activation=None,
+               long_skip=True,
                pool=(2, 2),
                prefix=''):
 
@@ -178,14 +181,18 @@ def unet_block(n_depth=2,
         # ...and up with skip layers
         for n in reversed(range(n_depth)):
 
-            layer = Concatenate(axis=channel_axis)([upsampling(pool)(layer), skip_layers[n]])
+            layer = upsampling(pool)(layer)
+            # We want to be able to create shortcuts without long skip connections to prevent memorization
+            if long_skip:
+                layer = Concatenate(axis=channel_axis)([layer, skip_layers[n]])
+
             filters = n_filter_base * 2 ** n
 
             for i in range(n_conv_per_depth - 1):
 
                 # Calculate last dim of conv input shape
                 last_dim = filters
-                if i == 0:
+                if i == 0 and long_skip:
                     last_dim = filters * 2
 
                 layer = conv_block(filters, *kernel_size,
@@ -404,6 +411,41 @@ def unet_blocks(n_blocks=1,
     #           for i in range(n_blocks)]
 
     return blocks
+
+
+def gaussian_2d(in_channels=1, k=7, s=3):
+    """
+    Returns a DepthwiseConv2D non-trainable Gaussian layer.
+    in_channels, int: number of input channels
+    k, int: kernel size
+    s, int: sigma
+
+    Source: https://stackoverflow.com/questions/55643675/how-do-i-implement-gaussian-blurring-layer-in-keras
+    """
+
+    def _kernel():
+        x = np.linspace(-s, s, k+1)
+        kernel = np.diff(stats.norm.cdf(x))
+        kernel = np.outer(kernel, kernel)
+        kernel /= kernel.sum()
+
+        # we need to modify it to make it compatible with the number of input channels
+        kernel = np.expand_dims(kernel, axis=-1)
+        kernel = np.repeat(kernel, in_channels, axis=-1)  # apply the same filter on all the input channels
+        kernel = np.expand_dims(kernel, axis=-1)  # for shape compatibility reasons
+
+        return kernel
+
+    def _layer(inp):
+        gaussian_layer = DepthwiseConv2D(k, use_bias=False, padding='same', name='gaussian_blur_block')
+        output = gaussian_layer(inp)
+        # print(weights.shape, gaussian_layer.get_weights()[0].shape)
+        gaussian_layer.set_weights([_kernel()])
+        gaussian_layer.trainable = False
+
+        return output
+
+    return _layer
 
 
 

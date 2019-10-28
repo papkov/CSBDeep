@@ -168,6 +168,7 @@ class CARE(object):
             kern_size       = self.config.unet_kern_size,
             n_first         = self.config.unet_n_first,
             last_activation = self.config.unet_last_activation,
+            long_skip       = self.config.long_skip
         )(self.config.unet_input_shape)
 
 
@@ -227,7 +228,7 @@ class CARE(object):
         self._model_prepared = True
 
 
-    def train(self, X,Y, validation_data, epochs=None, steps_per_epoch=None):
+    def train(self, X, Y, validation_data, epochs=None, steps_per_epoch=None):
         """Train the neural network with the given data.
 
         Parameters
